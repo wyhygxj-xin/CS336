@@ -21,29 +21,30 @@ class run_train_bpe:
         special_token_len=len(special_token)
         with open(self.input_file, 'r', encoding='utf-8') as f:
             while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
+                block = f.read(chunk_size)
+                if not block:
                     break
-                chunk = leftremain + chunk
+                block = leftremain + block
                 leftremain = ""
-                special_token_pos = chunk.rfind(special_token)
+                special_token_pos = block.rfind(special_token)
                 if special_token_pos == -1:
-                    leftremain = chunk
+                    leftremain = block
                     continue
-                chunk = chunk[:special_token_pos + special_token_len]
-                leftremain = chunk[special_token_pos + special_token_len:]
+                chunk = block[:special_token_pos + special_token_len]
+                leftremain = block[special_token_pos + special_token_len:]
                 yield chunk
         if leftremain:
             yield leftremain
     
     def pre_train(self):
         word_counts = defaultdict(int)
-        pattern = r"""(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""" 
+        pattern = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""") 
         toks = sorted(self.special_tokens, key=len, reverse=True)
         special_pattern = "|".join(re.escape(token) for token in self.special_tokens) 
 
         for chunk in self.tackle_file():
             blocks = re.split(special_pattern, chunk)
+            print(blocks)
             for block in blocks:
                 for match in re.finditer(pattern, block):
                     text = match.group(0)
@@ -65,15 +66,16 @@ class run_train_bpe:
             word_encoding[word] = list(word.encode('utf-8'))
 
         while size < self.vocab_size:
-            max_pair = self.max_pair(word_counts, word_encoding)
-            merge_list.append(max_pair)
-            vocab[size] = max_pair
+            max_pair = self.max_pair(word_counts, word_encoding, vocab)
+            merge_pair = (vocab[max_pair[0]], vocab[max_pair[1]])
+            merge_list.append(merge_pair)
+            new_token = vocab[max_pair[0]]+ vocab[max_pair[1]]
+            vocab[size] = new_token
+            self.merge(word_encoding, max_pair, size)
             size += 1
-            self.merge(word_encoding, max_pair)
-        
         return vocab, merge_list
     
-    def max_pair(self, word_counts, word_encoding):
+    def max_pair(self, word_counts, word_encoding, vocab):
         pairs = defaultdict(int)
         for word, byte_list in word_encoding.items():
             count = word_counts[word]
@@ -83,29 +85,29 @@ class run_train_bpe:
         
         max_pair = ()
         max_count = 0
-        for pair, count in pairs.items():
-            if count == max_count:
-                if pair[0] < max_pair[0]:
-                    continue
-                if pair[0] == max_pair[0] and pair[1] < max_pair[1]:
-                    continue
-            if count < max_count:
-                continue
-            max_pair = pair
-            max_count = count
-        
+        for pair, pair_count in pairs.items():
+            if pair_count > max_count:
+                max_pair = pair
+                max_count = pair_count
+            elif pair_count == max_count:
+                pair_str = (vocab[pair[0]], vocab[pair[1]])
+                max_pair_str = (vocab[max_pair[0]], vocab[max_pair[1]])
+                if pair_str > max_pair_str:
+                    max_pair = pair
+                    max_count = pair_count      
         return max_pair
     
-    def merge(self, word_encoding, max_pair):
+    def merge(self, word_encoding, max_pair, size):
         for word, byte_list in word_encoding.items():
-            print("test")
             i = 0
             new_tokens = []
             new_tokens_flag = False
             while i < len(byte_list):
+                
             # for i in range(len(byte_list)-1):
-                if i < len(byte_list) -1 and (byte_list[i], byte_list[i]+1) == max_pair:
-                    new_tokens.append(max_pair[0]+max_pair[1])
+                if i < len(byte_list) -1 and (byte_list[i], byte_list[i+1]) == max_pair:
+                    # 这里其实要把vocab传入做引导转换，append要引入新的ID值了
+                    new_tokens.append(size)
                     new_tokens_flag = True
                     i += 2
                 else:
@@ -113,7 +115,6 @@ class run_train_bpe:
                     i += 1
 
             if new_tokens_flag:
-                print(new_tokens)
                 word_encoding[word] = new_tokens
                 
 
